@@ -18,10 +18,18 @@ interface Link {
   contentHash: string;
 }
 
+// Deterministic message for a given creator + linkId
+// This message is FIXED — signing the same message always produces the same key
+const buildKeyMessage = (creatorAddress: string, linkId: number) =>
+  `BaseRevenueOS: Authorize encryption key for Link #${linkId} created by ${creatorAddress.toLowerCase()}`;
+
 export default function Dashboard() {
   const { address } = useAccount();
   const { writeContractAsync } = useWriteContract();
   const { signMessageAsync } = useSignMessage();
+
+  // Modal state for showing the secure share link after creation
+  const [shareModal, setShareModal] = useState<{ url: string; linkId: number } | null>(null);
 
   // Fetch contract balance (live analytics)
   const { data: creatorBalance, refetch: refetchBalance } = useReadContract({
@@ -30,6 +38,14 @@ export default function Dashboard() {
     functionName: "creatorBalances",
     args: [address as `0x${string}`],
     query: { enabled: !!address }
+  });
+
+  // Read nextLinkId from the contract so we know the EXACT future linkId
+  const { data: nextLinkIdData } = useReadContract({
+    address: BASE_REVENUE_OS_ADDRESS as `0x${string}`,
+    abi: BASE_REVENUE_OS_ABI as any,
+    functionName: "nextLinkId",
+    query: { enabled: !!address },
   });
 
   // 1. Get the array of Link IDs for this creator
@@ -83,24 +99,58 @@ export default function Dashboard() {
 
   const [isPublishing, setIsPublishing] = useState(false);
 
+  // --- DETERMINISTIC KEY HELPERS ---
+
+  // Derives the encryption key from a wallet signature.
+  // Same wallet + same linkId = same signature = same key. ALWAYS recoverable.
+  const getDeterministicKey = async (linkId: number): Promise<string> => {
+    if (!address) throw new Error("Wallet not connected");
+    const message = buildKeyMessage(address, linkId);
+    const signature = await signMessageAsync({ message });
+    // SHA256 hash the signature → a fixed-length secure key
+    return CryptoJS.SHA256(signature).toString();
+  };
+
+  // Recover key from localStorage cache first; if missing, re-derive from wallet signature.
+  const recoverKey = async (linkId: number): Promise<string | null> => {
+    try {
+      const cached = JSON.parse(localStorage.getItem("revenue_os_keys") || "{}");
+      if (cached[linkId]) return cached[linkId];
+
+      // Cache miss → ask wallet to re-sign and recover
+      const key = await getDeterministicKey(linkId);
+
+      // Write back to cache for next time
+      cached[linkId] = key;
+      localStorage.setItem("revenue_os_keys", JSON.stringify(cached));
+      return key;
+    } catch {
+      return null;
+    }
+  };
+
+  // --- CREATE LINK ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!address) return alert("Please connect your wallet first");
+    if (!nextLinkIdData) return alert("Still loading contract data. Try again in a moment.");
     setIsPublishing(true);
 
     try {
-      // 1. Generate a random strong key for this specific link (Fragment Key Strategy)
-      const linkKey = CryptoJS.lib.WordArray.random(16).toString();
+      // 1. Read the EXACT next linkId from the contract (no guessing)
+      const nextId = Number(nextLinkIdData as bigint);
 
-      // 2. Encrypt the URL with this link-specific key
+      // 2. Derive the deterministic key from wallet signature + linkId
+      //    The wallet popup says exactly what this signature is for.
+      const linkKey = await getDeterministicKey(nextId);
+
+      // 3. Encrypt the secret URL with that key
       const encryptedUrl = CryptoJS.AES.encrypt(formData.contentUrl, linkKey).toString();
 
-      const priceInUSDC = Math.floor(parseFloat(formData.price) * 1e6); // 6 decimals
-      const royaltyPercent = Math.floor(parseFloat(formData.royalty) * 100); // 10% => 1000
+      const priceInUSDC = Math.floor(parseFloat(formData.price) * 1e6);
+      const royaltyPercent = Math.floor(parseFloat(formData.royalty) * 100);
 
-      // Get the next link ID (prediction)
-      const nextId = links.length + 1;
-
+      // 4. Publish to blockchain
       await writeContractAsync({
         address: BASE_REVENUE_OS_ADDRESS as `0x${string}`,
         abi: BASE_REVENUE_OS_ABI as any,
@@ -108,21 +158,27 @@ export default function Dashboard() {
         args: [BigInt(priceInUSDC), formData.title, encryptedUrl, BigInt(royaltyPercent)],
       });
 
-      const fullLink = `${window.location.origin}/l/${nextId}#key=${linkKey}`;
-
-      // Persist key locally so "Copy" works later
+      // 5. Cache key in localStorage (convenience cache, NOT the source of truth)
       const keys = JSON.parse(localStorage.getItem("revenue_os_keys") || "{}");
       keys[nextId] = linkKey;
       localStorage.setItem("revenue_os_keys", JSON.stringify(keys));
 
-      alert(`Link Secured! \n\nShare this SECURE link with your audience: \n${fullLink}`);
+      const fullLink = `${window.location.origin}/l/${nextId}#key=${linkKey}`;
+
+      // 6. Show modal with the full secure link
+      setShareModal({ url: fullLink, linkId: nextId });
+
       setFormData({ title: "", description: "", price: "", contentUrl: "", royalty: "10" });
       refetchIds();
       refetchLinks();
       refetchBalance();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to publish link", error);
-      alert("Failed to publish link. Check console for details.");
+      if (error?.message?.includes("User rejected")) {
+        alert("Signature rejected. The key is needed to encrypt your content.");
+      } else {
+        alert("Failed to publish link. Check console for details.");
+      }
     } finally {
       setIsPublishing(false);
     }
@@ -143,19 +199,17 @@ export default function Dashboard() {
     }
   };
 
-  const copyLink = (linkId: number) => {
-    const keys = JSON.parse(localStorage.getItem("revenue_os_keys") || "{}");
-    const key = keys[linkId];
+  const copyLink = async (linkId: number) => {
+    try {
+      const key = await recoverKey(linkId);
+      const url = key
+        ? `${window.location.origin}/l/${linkId}#key=${key}`
+        : `${window.location.origin}/l/${linkId}`;
 
-    const url = key
-      ? `${window.location.origin}/l/${linkId}#key=${key}`
-      : `${window.location.origin}/l/${linkId}`;
-
-    navigator.clipboard.writeText(url);
-    if (key) {
-      alert("Secure link copied with decryption key! It will unlock automatically for buyers.");
-    } else {
-      alert("Public link copied! (No local key found for this link)");
+      navigator.clipboard.writeText(url);
+      setShareModal({ url, linkId });
+    } catch {
+      alert("Could not recover key. Please ensure your wallet is connected.");
     }
   };
 
@@ -176,6 +230,71 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[#f8fafc] flex flex-col">
+
+      {/* ── Share Modal ── */}
+      {shareModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full p-8 relative border border-gray-100">
+            {/* Close */}
+            <button
+              onClick={() => setShareModal(null)}
+              className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 transition-colors text-gray-500 font-bold"
+            >✕</button>
+
+            {/* Icon */}
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-12 h-12 rounded-2xl bg-green-50 flex items-center justify-center text-2xl">🔐</div>
+              <div>
+                <h2 className="text-xl font-black text-gray-900">Link #{shareModal.linkId} is Live!</h2>
+                <p className="text-xs text-green-600 font-bold uppercase tracking-widest">Encrypted & Secured</p>
+              </div>
+            </div>
+
+            {/* Key security notice */}
+            <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 mb-6 space-y-2">
+              <p className="text-sm font-bold text-blue-900 flex items-center gap-2">
+                <span>🛡️</span> Military-Grade Key Recovery
+              </p>
+              <p className="text-xs text-blue-700 leading-relaxed">
+                Your key is <strong>derived from your wallet signature</strong>. Even if you clear your browser, you can always recover it by signing the same message again from your dashboard. <strong>Your wallet IS your key vault.</strong>
+              </p>
+            </div>
+
+            {/* Secure Share URL */}
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">
+              🔗 Your Secure Share Link
+            </label>
+            <div className="flex gap-2 mb-3">
+              <input
+                type="text"
+                readOnly
+                value={shareModal.url}
+                className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-mono text-xs text-gray-700 focus:outline-none"
+              />
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(shareModal.url);
+                  alert("Secure link copied to clipboard! ✅");
+                }}
+                className="px-4 py-3 bg-[#0052FF] text-white rounded-xl font-bold text-sm hover:bg-blue-600 transition-all shadow-lg shadow-blue-500/20"
+              >
+                Copy
+              </button>
+            </div>
+            <p className="text-[10px] text-gray-400 leading-relaxed mb-6">
+              ⚠️ Share this <strong>exact link</strong> (including the <code className="bg-gray-100 px-1 rounded">#key=...</code> part) with your buyers. The key is embedded in the URL and never stored on-chain.
+            </p>
+
+            <button
+              onClick={() => setShareModal(null)}
+              className="w-full py-4 bg-gray-900 text-white rounded-2xl font-black text-sm hover:bg-gray-800 transition-all"
+            >
+              Done — I've saved my link
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Top Navigation Header */}
       <header className="sticky top-0 z-50 bg-[#0a0b14] text-white border-b border-gray-800 shadow-xl">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

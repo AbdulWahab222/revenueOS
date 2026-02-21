@@ -1,0 +1,157 @@
+Perfect — let’s **update your guide** to use **Hardhat** instead of Foundry. This will give you the fastest, easiest path for your MVP **Base Revenue OS**.
+
+Here’s the revised step-by-step:
+
+---
+
+# **Step 1: Set up your dev environment (using Hardhat + OnchainKit)**
+
+1. **Bootstrap OnchainKit project**
+
+```bash
+npm create onchain@latest
+cd base-revenue-os
+npm install
+npm run dev
+```
+
+* You now have a basic Next.js + OnchainKit app running.
+
+---
+
+2. **Install and initialize Hardhat for smart contracts**
+
+```bash
+npm install --save-dev hardhat
+npx hardhat
+```
+
+* Choose **“Create a basic sample project”**
+* Accept default paths and install dependencies when prompted
+
+---
+
+3. **Configure `.env` with Base Sepolia RPC & wallet**
+
+```bash
+BASE_SEPOLIA_RPC_URL="https://sepolia.base.org"
+PRIVATE_KEY="your_test_wallet_private_key"
+```
+
+* Make sure your wallet has test USDC on Base Sepolia
+
+---
+
+# **Step 2: Add & Deploy Your Smart Contract**
+
+1. Create `contracts/BaseRevenueOS.sol` (use the Paid Link contract we designed earlier)
+
+2. Compile the contract:
+
+```bash
+npx hardhat compile
+```
+
+3. Deploy to Base Sepolia:
+
+Create `scripts/deploy.js`:
+
+```javascript
+const hre = require("hardhat");
+
+async function main() {
+  const BaseRevenue = await hre.ethers.getContractFactory("BaseRevenueOS");
+  const baseRevenue = await BaseRevenue.deploy("0xUSDC_Testnet_Address"); // USDC on Base Sepolia
+
+  await baseRevenue.deployed();
+
+  console.log("BaseRevenueOS deployed to:", baseRevenue.address);
+}
+
+main()
+  .then(() => process.exit(0))
+  .catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+```
+
+Then run:
+
+```bash
+npx hardhat run scripts/deploy.js --network sepolia
+```
+
+4. Copy the deployed contract address into your `.env`:
+
+```bash
+NEXT_PUBLIC_BASE_REVENUE_CONTRACT_ADDRESS="0xYourContractAddress"
+```
+
+---
+
+# **Step 3: Connect Frontend to Contract**
+
+1. Create `calls.ts`:
+
+```ts
+const baseRevenueAddress = process.env.NEXT_PUBLIC_BASE_REVENUE_CONTRACT_ADDRESS;
+const baseRevenueAbi = [ /* ABI of createLink() and buyLink() */ ];
+
+export const calls = [
+  {
+    address: baseRevenueAddress,
+    abi: baseRevenueAbi,
+    functionName: 'createLink',
+    args: [/* price, contentHash */],
+  },
+  {
+    address: baseRevenueAddress,
+    abi: baseRevenueAbi,
+    functionName: 'buyLink',
+    args: [/* linkId */],
+  },
+];
+```
+
+2. Use OnchainKit Transaction component in your pages:
+
+```tsx
+import { Transaction } from '@coinbase/onchainkit/transaction';
+import { calls } from '@/calls';
+
+<Transaction calls={calls} />
+```
+
+* Handles **sending transactions**, **wallet connect**, and showing **success/failure notifications**.
+
+---
+
+# **Step 4: Frontend Pages**
+
+* `/dashboard` → Creator flow: create paid links, view earnings.
+* `/l/[linkId]` → Buyer flow: pay USDC and unlock content.
+* Wallet integration with Coinbase Wallet using OnchainKit.
+
+---
+
+# **Step 5: Test End-to-End**
+
+1. Create a paid link as a creator
+2. Buy it with another wallet
+3. Verify:
+
+   * Content unlocks
+   * Revenue split (5% platform fee)
+4. Collect proof for early adoption
+
+---
+
+# ✅ **Summary**
+
+* **Frontend:** Next.js + OnchainKit → handles wallet connect and transactions
+* **Smart Contract:** Hardhat-deployed `BaseRevenueOS.sol` handles USDC payments & access
+* **Wallets:** Coinbase Wallet for creators and buyers
+* **Testing:** Base Sepolia testnet + USDC test tokens
+* **Deployment path:** Hardhat is simpler and faster for MVP launch
+

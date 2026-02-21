@@ -1,0 +1,13 @@
+✅ Key Notes:
+
+Reusable: Same contract handles multiple creators and links.
+
+Simple: Only paid links, no subscriptions, raffles, NFTs yet.
+
+Safe: Prevents double purchase with hasPurchased.
+
+Revenue Split: 95% to creator, 5% to platform.
+
+Event Driven: Easy for frontend to index sold links.
+
+Upgradeable Later: You can extend to subscriptions, NFTs, etc.

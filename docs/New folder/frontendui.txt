@@ -1,0 +1,94 @@
+2️⃣ Frontend Page Layout (Next.js + OnchainKit)
+
+Goal: Minimal, fast, clear creator flow + buyer flow.
+
+A) Creator Dashboard
+
+Page: /dashboard
+
+Components:
+
+Wallet Connect (OnchainKit)
+
+Create Paid Link Form
+
+Title: text input
+
+Description: optional textarea
+
+Price: number input (USDC)
+
+Content URL / IPFS hash: text input
+
+Publish Button → calls createLink() on smart contract
+
+Your Links Table
+
+Columns: Link ID | Title | Price | Sold | Copy Link Button
+
+Earnings Summary
+
+Total earned
+
+Withdraw funds button
+
+UX Flow:
+
+Connect wallet → see dashboard
+
+Create new link → appears immediately in table
+
+Copy link → share with audience
+
+B) Public Paid Link Page (Buyer Flow)
+
+Page: /l/[linkId]
+
+Components:
+
+Title & Description
+
+Price Display
+
+Connect Wallet Button
+
+Pay Button
+
+Calls buyLink() on contract
+
+Once paid, unlocks content
+
+Content Reveal Section
+
+Hidden until purchase
+
+Shows URL or download button
+
+UX Flow:
+
+Visitor clicks link → sees title, price
+
+Connects wallet
+
+Pays USDC
+
+Instantly sees content
+
+C) Optional Minimal Styling
+
+Minimal colors → Base theme / Coinbase blue
+
+Mobile-first layout → all creators post links from mobile
+
+Clean typography → trust + ease
+
+Why minimal works:
+Focus on proof-of-revenue, not fancy UI. Remember, your MVP goal: get first 5 creators to earn $100 each.
+
+✅ Summary
+Component	Purpose	Tech
+Smart Contract	Handle paid links, revenue split	Solidity + USDC
+Creator Dashboard	Create links, see earnings	Next.js + OnchainKit
+Paid Link Page	Buyer flow, pay & unlock	Next.js + OnchainKit
+Wallet Connection	Identity + payment	Coinbase Wallet / OnchainKit
+Minimal Backend	Optional: track events	Supabase / JSON file / None
